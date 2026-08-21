@@ -63,6 +63,23 @@
     border-radius:6px;
     white-space:nowrap;
   }
+  header.top .clear-btn{
+    margin-top:2px;
+    border:1px solid var(--rule);
+    background:transparent;
+    color:var(--ink-soft);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    letter-spacing:0.02em;
+    padding:5px 10px;
+    border-radius:20px;
+    cursor:pointer;
+  }
+  header.top .clear-btn:active{
+    background:var(--red);
+    border-color:var(--red);
+    color:#fff;
+  }
 
   .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
   .field-row.single{grid-template-columns:1fr;}
@@ -355,6 +372,7 @@
       <div class="sub">форма склада · заполняется на месте</div>
     </div>
     <div class="num-badge" id="dateBadge">—</div>
+    <button class="clear-btn" id="clearBtn" type="button">Очистить форму</button>
   </header>
 
   <div class="field-row">
@@ -645,6 +663,24 @@ dateInput.addEventListener('change', updateBadge);
 updateBadge();
 
 for(let i=0;i<3;i++) addRow();
+
+// clear form — resets all header fields, all rows, and the total,
+// with a confirmation so it can't be triggered by accident
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  if(!confirm('Очистить всю форму? Введённые данные будут удалены.')) return;
+
+  ['invoiceNo','orgName','city','placesCount','boxState','managerName','warehouseHead']
+    .forEach(id => document.getElementById(id).value = '');
+
+  dateInput.value = today.toISOString().slice(0,10);
+  updateBadge();
+
+  rowsContainer.innerHTML = '';
+  for(let i=0;i<3;i++) addRow();
+  recalcGrand();
+
+  showToast('Форма очищена');
+});
 
 // ---- build one copy of the act (used inside the 2x2 print sheet) ----
 // ---- build the single act (used for print, PDF and photo export) ----
