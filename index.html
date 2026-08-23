@@ -571,11 +571,23 @@ function showToast(msg){
 }
 
 function recalcRow(card){
-  const qty = parseFloat(card.querySelector('.qty-input').value) || 0;
-  const price = parseFloat(card.querySelector('.price-input').value) || 0;
+  let qty = parseFloat(card.querySelector('.qty-input').value);
+  let price = parseFloat(card.querySelector('.price-input').value);
+  if(isNaN(qty) || qty < 0){ qty = 0; }
+  if(isNaN(price) || price < 0){ price = 0; }
   const total = qty * price;
   card.querySelector('.total-input').value = total ? fmt(total) : '';
   recalcGrand();
+  saveState();
+}
+
+// clamps a number input to a non-negative value as the user types
+function clampNonNegative(input){
+  if(input.value === '') return;
+  const n = parseFloat(input.value);
+  if(isNaN(n) || n < 0){
+    input.value = '';
+  }
 }
 
 function recalcGrand(){
@@ -624,11 +636,11 @@ function addRow(prefill){
       <div class="row-nums">
         <div class="num-field">
           <label>Кол-во</label>
-          <input type="number" inputmode="decimal" class="qty-input" placeholder="0">
+          <input type="number" inputmode="decimal" min="0" step="any" class="qty-input" placeholder="0">
         </div>
         <div class="num-field">
           <label>Цена</label>
-          <input type="number" inputmode="decimal" class="price-input" placeholder="0">
+          <input type="number" inputmode="decimal" min="0" step="any" class="price-input" placeholder="0">
         </div>
         <div class="num-field total">
           <label>Итого</label>
@@ -640,29 +652,123 @@ function addRow(prefill){
   rowsContainer.appendChild(card);
   attachAutocomplete(card);
 
-  card.querySelector('.qty-input').addEventListener('input', ()=>recalcRow(card));
-  card.querySelector('.price-input').addEventListener('input', ()=>recalcRow(card));
+  const posEl = card.querySelector('.pos-input');
+  const nameEl = card.querySelector('.name-input');
+  const descEl = card.querySelector('.desc-input');
+  const qtyEl = card.querySelector('.qty-input');
+  const priceEl = card.querySelector('.price-input');
+
+  if(prefill){
+    posEl.value = prefill.pos || '';
+    nameEl.value = prefill.name || '';
+    descEl.value = prefill.desc || '';
+    qtyEl.value = prefill.qty || '';
+    priceEl.value = prefill.price || '';
+  }
+
+  qtyEl.addEventListener('input', ()=>{ clampNonNegative(qtyEl); recalcRow(card); });
+  priceEl.addEventListener('input', ()=>{ clampNonNegative(priceEl); recalcRow(card); });
+  [posEl, nameEl, descEl].forEach(el=>{
+    el.addEventListener('input', saveState);
+    el.addEventListener('change', saveState);
+  });
+
   card.querySelector('.remove-btn').addEventListener('click', ()=>{
+    if(rowsContainer.children.length <= 1){
+      showToast('Должна остаться хотя бы одна позиция');
+      return;
+    }
     card.remove();
     reindexRows();
     recalcGrand();
+    saveState();
   });
+
+  recalcRow(card);
 }
 
-document.getElementById('addRowBtn').addEventListener('click', ()=>addRow());
+document.getElementById('addRowBtn').addEventListener('click', ()=>{ addRow(); saveState(); });
+
+// ---- date helpers: work with local calendar dates only, never UTC,
+// to avoid the act's date shifting by a day depending on the device's timezone ----
+function localDateStr(d){
+  const year = d.getFullYear();
+  const month = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${year}-${month}-${day}`;
+}
+function formatDateRu(value){
+  if(!value) return '';
+  const [y,m,d] = value.split('-');
+  return `${d}.${m}.${y}`;
+}
 
 // init: today's date + badge + a few empty rows
 const dateInput = document.getElementById('actDate');
 const today = new Date();
-dateInput.value = today.toISOString().slice(0,10);
+dateInput.value = localDateStr(today);
 function updateBadge(){
-  const d = dateInput.value ? new Date(dateInput.value) : today;
-  document.getElementById('dateBadge').textContent = d.toLocaleDateString('ru-RU');
+  document.getElementById('dateBadge').textContent = dateInput.value ? formatDateRu(dateInput.value) : '—';
 }
-dateInput.addEventListener('change', updateBadge);
+dateInput.addEventListener('change', ()=>{ updateBadge(); saveState(); });
 updateBadge();
 
-for(let i=0;i<3;i++) addRow();
+// ---- autosave: persist the whole form to localStorage so nothing is lost
+// on an accidental reload or the page/tab being closed ----
+const STORAGE_KEY = 'akt_brak_vozvrat_autosave_v1';
+const HEADER_FIELD_IDS = ['invoiceNo','actDate','orgName','city','placesCount','boxState','managerName','warehouseHead'];
+let restoringState = false;
+
+function saveState(){
+  if(restoringState) return;
+  const header = {};
+  HEADER_FIELD_IDS.forEach(id => header[id] = document.getElementById(id).value);
+  const rows = [...rowsContainer.querySelectorAll('.row-card')].map(card => ({
+    pos: card.querySelector('.pos-input').value,
+    name: card.querySelector('.name-input').value,
+    desc: card.querySelector('.desc-input').value,
+    qty: card.querySelector('.qty-input').value,
+    price: card.querySelector('.price-input').value
+  }));
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({header, rows}));
+  }catch(e){ /* storage unavailable — silently skip autosave */ }
+}
+
+function loadState(){
+  let saved;
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    saved = JSON.parse(raw);
+  }catch(e){ return false; }
+  if(!saved || !saved.rows || !saved.rows.length) return false;
+
+  restoringState = true;
+  HEADER_FIELD_IDS.forEach(id=>{
+    if(saved.header && saved.header[id] !== undefined){
+      document.getElementById(id).value = saved.header[id];
+    }
+  });
+  updateBadge();
+
+  rowsContainer.innerHTML = '';
+  saved.rows.forEach(r => addRow(r));
+  recalcGrand();
+  restoringState = false;
+  return true;
+}
+
+HEADER_FIELD_IDS.forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener('input', saveState);
+  el.addEventListener('change', saveState);
+});
+
+const restored = loadState();
+if(!restored){
+  for(let i=0;i<3;i++) addRow();
+}
 
 // clear form — resets all header fields, all rows, and the total,
 // with a confirmation so it can't be triggered by accident
@@ -672,22 +778,72 @@ document.getElementById('clearBtn').addEventListener('click', ()=>{
   ['invoiceNo','orgName','city','placesCount','boxState','managerName','warehouseHead']
     .forEach(id => document.getElementById(id).value = '');
 
-  dateInput.value = today.toISOString().slice(0,10);
+  dateInput.value = localDateStr(today);
   updateBadge();
 
   rowsContainer.innerHTML = '';
   for(let i=0;i<3;i++) addRow();
   recalcGrand();
 
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
   showToast('Форма очищена');
 });
+
+// ---- validation before export: required fields must be filled ----
+function markInvalid(el){
+  el.style.borderColor = '#a9392b';
+  setTimeout(()=>{ el.style.borderColor = ''; }, 2500);
+}
+
+function validateBeforeExport(){
+  const missing = [];
+
+  const requiredHeader = [
+    ['invoiceNo','№ накладной'],
+    ['actDate','Дата'],
+    ['orgName','Название организации'],
+    ['city','Населённый пункт']
+  ];
+  requiredHeader.forEach(([id,label])=>{
+    const el = document.getElementById(id);
+    if(!el.value || !el.value.trim()){
+      missing.push(label);
+      markInvalid(el);
+    }
+  });
+
+  const rows = [...rowsContainer.querySelectorAll('.row-card')];
+  let hasFilledRow = false;
+  rows.forEach((card,i)=>{
+    const name = card.querySelector('.name-input');
+    const desc = card.querySelector('.desc-input');
+    const qty = card.querySelector('.qty-input');
+    const price = card.querySelector('.price-input');
+    const isEmpty = !name.value.trim() && !desc.value && !qty.value && !price.value;
+    if(isEmpty) return; // unused blank row — nothing to validate
+    hasFilledRow = true;
+    if(!name.value.trim()){ missing.push(`Позиция ${i+1}: наименование`); markInvalid(name); }
+    if(!desc.value){ missing.push(`Позиция ${i+1}: описание брака`); markInvalid(desc); }
+    if(!qty.value || parseFloat(qty.value) <= 0){ missing.push(`Позиция ${i+1}: кол-во`); markInvalid(qty); }
+    if(!price.value || parseFloat(price.value) <= 0){ missing.push(`Позиция ${i+1}: цена`); markInvalid(price); }
+  });
+  if(!hasFilledRow){
+    missing.push('Добавьте хотя бы одну заполненную позицию');
+  }
+
+  if(missing.length){
+    alert('Заполните обязательные поля перед созданием документа:\n\n— ' + missing.join('\n— '));
+    return false;
+  }
+  return true;
+}
 
 // ---- build one copy of the act (used inside the 2x2 print sheet) ----
 // ---- build the single act (used for print, PDF and photo export) ----
 function buildCopyHtml(minRows, includeData){
   const esc = escapeHtml;
   const val = id => includeData ? esc(document.getElementById(id).value || '') : '';
-  const dateStr = includeData && dateInput.value ? new Date(dateInput.value).toLocaleDateString('ru-RU') : '';
+  const dateStr = includeData && dateInput.value ? formatDateRu(dateInput.value) : '';
 
   const rows = includeData ? [...rowsContainer.querySelectorAll('.row-card')].map(card => ({
     pos: card.querySelector('.pos-input').value || '',
@@ -762,14 +918,45 @@ function buildPhotoTemplate(){
     `<div class="pt-photo">${buildCopyHtml(4, true)}</div>`;
 }
 
+// pressing Enter moves focus to the next field (like Tab) — convenient for
+// fast keyboard entry and barcode-scanner style workflows
+function getFocusOrder(){
+  return [...document.querySelectorAll(
+    '#invoiceNo, #actDate, #orgName, #city, #placesCount, #boxState, ' +
+    '.pos-input, .name-input, .desc-input, .qty-input, .price-input, ' +
+    '#managerName, #warehouseHead'
+  )];
+}
+
+document.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Enter') return;
+  const target = e.target;
+  if(target.tagName !== 'INPUT' && target.tagName !== 'SELECT') return;
+
+  e.preventDefault();
+  const order = getFocusOrder();
+  const idx = order.indexOf(target);
+  if(idx === -1) return;
+
+  const next = order[idx+1];
+  if(next){
+    next.focus();
+    if(typeof next.select === 'function') next.select();
+  }else{
+    target.blur();
+  }
+});
+
 // print
 document.getElementById('printBtn').addEventListener('click', ()=>{
+  if(!validateBeforeExport()) return;
   buildPrintTemplate();
   window.print();
 });
 
 // PDF export — A4 landscape sheet, act occupies exactly 1/4 of it
 document.getElementById('pdfBtn').addEventListener('click', async ()=>{
+  if(!validateBeforeExport()) return;
   showToast('Готовим PDF…');
   buildPrintTemplate();
   const quarter = document.querySelector('#printTemplate .pt-quarter');
@@ -789,6 +976,7 @@ document.getElementById('pdfBtn').addEventListener('click', async ()=>{
 // photo export (PNG) — uses a Blob + new tab instead of the download attribute,
 // since Safari/iOS (especially inside Quick Look) often ignores <a download>.
 document.getElementById('photoBtn').addEventListener('click', async ()=>{
+  if(!validateBeforeExport()) return;
   showToast('Готовим фото…');
   buildPhotoTemplate();
   const photo = document.querySelector('#printTemplate .pt-photo');
@@ -818,6 +1006,7 @@ document.getElementById('photoBtn').addEventListener('click', async ()=>{
 // share the act as a photo to a messenger, with a caption:
 // line 1 — client/organisation name, line 2 — the defect description(s) used in the act
 document.getElementById('shareBtn').addEventListener('click', async ()=>{
+  if(!validateBeforeExport()) return;
   showToast('Готовим фото…');
   buildPhotoTemplate();
   const photo = document.querySelector('#printTemplate .pt-photo');
@@ -843,7 +1032,7 @@ document.getElementById('shareBtn').addEventListener('click', async ()=>{
 
     if(navigator.canShare && navigator.canShare({files:[file]})){
       try{
-        await navigator.share({files:[file], title:'Акт о браке/возврате', text: caption});
+        await navigator.share({files:[file], text: caption});
         return;
       }catch(e){ /* user cancelled or share failed — fall through to fallback */ }
     }
