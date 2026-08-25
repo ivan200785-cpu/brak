@@ -290,13 +290,23 @@
     #printTemplate{display:block !important;}
   }
 
-  /* ---- exact template replica, sized to 1/4 of an A4 landscape sheet ---- */
+  /* ---- exact template replica, tiled up to 4-per-sheet (1/4 A4 landscape each) ---- */
   #printTemplate{
     display:none;
+    background:#fff;
+  }
+  .pt-sheet{
     width:297mm;
     height:210mm;
-    background:#fff;
     box-sizing:border-box;
+    display:grid;
+    grid-template-columns:148.5mm 148.5mm;
+    grid-template-rows:105mm 105mm;
+    background:#fff;
+  }
+  @media print{
+    .pt-sheet{ page-break-after: always; }
+    .pt-sheet:last-child{ page-break-after: auto; }
   }
   .pt-quarter{
     width:148.5mm;
@@ -838,27 +848,52 @@ function validateBeforeExport(){
   return true;
 }
 
-// ---- build one copy of the act (used inside the 2x2 print sheet) ----
-// ---- build the single act (used for print, PDF and photo export) ----
-function buildCopyHtml(minRows, includeData){
-  const esc = escapeHtml;
-  const val = id => includeData ? esc(document.getElementById(id).value || '') : '';
-  const dateStr = includeData && dateInput.value ? formatDateRu(dateInput.value) : '';
+// ---- how many positions fit on one act before it spills to a new act ----
+const MAX_ROWS_PER_ACT = 10;
+const ACTS_PER_SHEET = 4; // 2x2 grid on one A4 landscape sheet
 
-  const rows = includeData ? [...rowsContainer.querySelectorAll('.row-card')].map(card => ({
+function chunk(arr, size){
+  const out = [];
+  for(let i=0; i<arr.length; i+=size) out.push(arr.slice(i, i+size));
+  return out;
+}
+
+// pulls the real entered rows from the live form (no padding)
+function collectRowsData(){
+  return [...rowsContainer.querySelectorAll('.row-card')].map(card => ({
     pos: card.querySelector('.pos-input').value || '',
     name: card.querySelector('.name-input').value || '',
     desc: card.querySelector('.desc-input').value || '',
     qty: card.querySelector('.qty-input').value || '',
     price: card.querySelector('.price-input').value || '',
     total: card.querySelector('.total-input').value || ''
-  })) : [];
+  }));
+}
 
+// splits all rows into acts of up to MAX_ROWS_PER_ACT, each remembering where
+// its numbering continues from (so position 11 starts the next act, etc.)
+function buildActsMeta(){
+  const allRows = collectRowsData();
+  if(!allRows.length) return [{ rows: [], startIndex: 0 }];
+  const acts = [];
+  for(let i=0; i<allRows.length; i+=MAX_ROWS_PER_ACT){
+    acts.push({ rows: allRows.slice(i, i+MAX_ROWS_PER_ACT), startIndex: i });
+  }
+  return acts;
+}
+
+// ---- renders one act: shared header + its slice of rows, numbered continuously ----
+function buildActHtml(rowsSlice, startIndex, minRows, totalStr){
+  const esc = escapeHtml;
+  const val = id => esc(document.getElementById(id).value || '');
+  const dateStr = dateInput.value ? formatDateRu(dateInput.value) : '';
+
+  const rows = rowsSlice.slice();
   while(rows.length < minRows) rows.push({pos:'',name:'',desc:'',qty:'',price:'',total:''});
 
   const rowsHtml = rows.map((r,i)=>`
     <tr>
-      <td class="pt-num">${i+1}</td>
+      <td class="pt-num">${startIndex+i+1}</td>
       <td class="pt-pos">${esc(r.pos)}</td>
       <td class="pt-name">${esc(r.name)}</td>
       <td class="pt-qty">${esc(r.qty)}</td>
@@ -866,8 +901,6 @@ function buildCopyHtml(minRows, includeData){
       <td class="pt-price">${esc(r.price)}</td>
       <td class="pt-total">${esc(r.total)}</td>
     </tr>`).join('');
-
-  const totalStr = includeData ? esc(grandTotalEl.textContent) : '';
 
   return `
     <div class="pt-title">Акт о браке/возврате</div>
@@ -898,7 +931,7 @@ function buildCopyHtml(minRows, includeData){
     </table>
 
     <div class="pt-footer">
-      <div class="pt-line">Итого сумма <span class="fill-long">${totalStr}</span></div>
+      <div class="pt-line">Итого сумма <span class="fill-long">${esc(totalStr)}</span></div>
       <div class="pt-line">Менеджер <span class="fill-long">${val('managerName')}</span></div>
       <div class="pt-line">Начальник склада <span class="fill-long">${val('warehouseHead')}</span></div>
       <div class="pt-line">М.П.</div>
@@ -906,16 +939,30 @@ function buildCopyHtml(minRows, includeData){
   `;
 }
 
-// ---- assemble the printable page: one filled act, sized to 1/4 of A4 landscape ----
+// ---- assemble the printable pages: one act per 1/4 sheet, up to 4 acts per
+// physical A4 landscape sheet; if there are more than 10 positions, position 11
+// onward spills onto the next act (same header, continuing numbering) ----
 function buildPrintTemplate(){
-  document.getElementById('printTemplate').innerHTML =
-    `<div class="pt-quarter">${buildCopyHtml(4, true)}</div>`;
+  const acts = buildActsMeta();
+  const sheetsOfActs = chunk(acts, ACTS_PER_SHEET);
+
+  const html = sheetsOfActs.map(sheetActs => {
+    const quarters = sheetActs.map(act => {
+      const pageTotal = act.rows.reduce((sum,r)=> sum + (parseFloat(r.total)||0), 0);
+      return `<div class="pt-quarter">${buildActHtml(act.rows, act.startIndex, 4, fmt(pageTotal))}</div>`;
+    }).join('');
+    return `<div class="pt-sheet">${quarters}</div>`;
+  }).join('');
+
+  document.getElementById('printTemplate').innerHTML = html;
 }
 
-// ---- assemble a tight-fit version (auto height, no blank space) for photo/share ----
+// ---- assemble a tight-fit version (auto height, no blank space) for photo/share —
+// includes every position in one continuous list, not split into separate acts ----
 function buildPhotoTemplate(){
+  const allRows = collectRowsData();
   document.getElementById('printTemplate').innerHTML =
-    `<div class="pt-photo">${buildCopyHtml(4, true)}</div>`;
+    `<div class="pt-photo">${buildActHtml(allRows, 0, 4, grandTotalEl.textContent)}</div>`;
 }
 
 // pressing Enter moves focus to the next field (like Tab) — convenient for
@@ -954,20 +1001,23 @@ document.getElementById('printBtn').addEventListener('click', ()=>{
   window.print();
 });
 
-// PDF export — A4 landscape sheet, act occupies exactly 1/4 of it
+// PDF export — A4 landscape sheet(s), up to 4 acts per sheet (2x2), one PDF page per sheet
 document.getElementById('pdfBtn').addEventListener('click', async ()=>{
   if(!validateBeforeExport()) return;
   showToast('Готовим PDF…');
   buildPrintTemplate();
-  const quarter = document.querySelector('#printTemplate .pt-quarter');
   const tpl = document.getElementById('printTemplate');
   tpl.style.display = 'block';
-  const canvas = await html2canvas(quarter, {scale:3, backgroundColor:'#ffffff'});
-  tpl.style.display = 'none';
+  const sheets = [...tpl.querySelectorAll('.pt-sheet')];
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF('l','mm','a4'); // 297 x 210 mm
-  const imgData = canvas.toDataURL('image/jpeg', 0.95);
-  pdf.addImage(imgData, 'JPEG', 0, 0, 148.5, 105); // top-left quarter
+  for(let i=0; i<sheets.length; i++){
+    const canvas = await html2canvas(sheets[i], {scale:3, backgroundColor:'#ffffff'});
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    if(i > 0) pdf.addPage();
+    pdf.addImage(imgData, 'JPEG', 0, 0, 297, 210);
+  }
+  tpl.style.display = 'none';
   const invoiceNo = document.getElementById('invoiceNo').value || 'бн';
   pdf.save(`Akt_${invoiceNo}_${dateInput.value}.pdf`);
   showToast('PDF сохранён');
