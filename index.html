@@ -249,6 +249,53 @@
 
   .signoff{margin-top:20px;display:flex;flex-direction:column;gap:10px;}
 
+  .upload-box{
+    margin-top:10px;
+    border:1.5px dashed var(--rule);
+    border-radius:14px;
+    padding:14px;
+    background:var(--paper-2);
+  }
+  .upload-btn{
+    width:100%;
+    border:1.5px dashed var(--amber);
+    background:transparent;
+    color:var(--amber-deep);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    letter-spacing:0.02em;
+    padding:11px;
+    border-radius:12px;
+    cursor:pointer;
+  }
+  .upload-btn:active{ background:#f6ede2; }
+  .photo-thumbs{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:8px;
+    margin:12px 0;
+  }
+  .photo-thumb{
+    position:relative;
+    aspect-ratio:1;
+    border-radius:8px;
+    overflow:hidden;
+    border:1px solid var(--rule);
+    background:#fff;
+  }
+  .photo-thumb img{
+    width:100%;height:100%;object-fit:cover;display:block;
+  }
+  .thumb-remove{
+    position:absolute;top:3px;right:3px;
+    width:20px;height:20px;border-radius:50%;
+    border:none;background:rgba(28,43,58,0.75);color:#fff;
+    font-size:11px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #photosToPdfBtn{ width:100%; }
+  #photosToPdfBtn:disabled{ opacity:0.45; }
+
   .actions{
     position:fixed;left:0;right:0;bottom:0;
     background:linear-gradient(to top, var(--paper) 60%, rgba(221,228,233,0));
@@ -439,6 +486,14 @@
       <label>Начальник склада</label>
       <input id="warehouseHead" placeholder="ФИО">
     </div>
+  </div>
+
+  <div class="section-label">Печать нескольких актов (фото)</div>
+  <div class="upload-box">
+    <input type="file" id="photosInput" accept="image/*" multiple style="display:none">
+    <button class="upload-btn" id="uploadTriggerBtn" type="button">+ Добавить фото актов</button>
+    <div class="photo-thumbs" id="photoThumbs"></div>
+    <button class="btn btn-secondary" id="photosToPdfBtn" type="button" disabled>Сохранить всё в PDF</button>
   </div>
 
 </div>
@@ -992,6 +1047,110 @@ document.addEventListener('keydown', (e)=>{
   }else{
     target.blur();
   }
+});
+
+// ---- upload several act photos and merge them into one printable PDF ----
+let uploadedPhotos = []; // { id, dataUrl, width, height, mime }
+
+function loadImageFile(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=> resolve({
+        dataUrl: reader.result,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        mime: file.type || 'image/jpeg'
+      });
+      img.onerror = ()=> reject(new Error('unreadable image'));
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderPhotoThumbs(){
+  const wrap = document.getElementById('photoThumbs');
+  wrap.innerHTML = '';
+  uploadedPhotos.forEach(p=>{
+    const thumb = document.createElement('div');
+    thumb.className = 'photo-thumb';
+    thumb.innerHTML = `<img src="${p.dataUrl}" alt=""><button class="thumb-remove" type="button" data-id="${p.id}">✕</button>`;
+    wrap.appendChild(thumb);
+  });
+  wrap.querySelectorAll('.thumb-remove').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-id');
+      uploadedPhotos = uploadedPhotos.filter(p => String(p.id) !== id);
+      renderPhotoThumbs();
+    });
+  });
+  document.getElementById('photosToPdfBtn').disabled = uploadedPhotos.length === 0;
+}
+
+document.getElementById('uploadTriggerBtn').addEventListener('click', ()=>{
+  document.getElementById('photosInput').click();
+});
+
+document.getElementById('photosInput').addEventListener('change', async (e)=>{
+  const files = [...e.target.files];
+  if(!files.length) return;
+  showToast('Загружаем фото…');
+  for(const file of files){
+    try{
+      const loaded = await loadImageFile(file);
+      uploadedPhotos.push({ id: `${Date.now()}_${Math.random()}`, ...loaded });
+    }catch(err){ /* skip a file that couldn't be read as an image */ }
+  }
+  e.target.value = ''; // allow re-selecting the same file(s) again later
+  renderPhotoThumbs();
+  showToast(`Добавлено фото: ${uploadedPhotos.length}`);
+});
+
+// lays uploaded photos into a 2x2 grid per A4 landscape sheet (same layout as the
+// app's own printed acts), preserving each photo's own aspect ratio
+document.getElementById('photosToPdfBtn').addEventListener('click', async ()=>{
+  if(!uploadedPhotos.length) return;
+  showToast('Готовим PDF…');
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF('l','mm','a4');
+  const pageW = 297, pageH = 210;
+  const cellW = pageW/2, cellH = pageH/2;
+  const cellPad = 4;
+
+  uploadedPhotos.forEach((img, idx)=>{
+    const posInSheet = idx % 4;
+    if(idx > 0 && posInSheet === 0) pdf.addPage();
+
+    const col = posInSheet % 2;
+    const row = Math.floor(posInSheet/2);
+    const cellX = col*cellW;
+    const cellY = row*cellH;
+
+    const availW = cellW - cellPad*2;
+    const availH = cellH - cellPad*2;
+    const ratio = img.width / img.height;
+    let drawW = availW;
+    let drawH = drawW / ratio;
+    if(drawH > availH){
+      drawH = availH;
+      drawW = drawH * ratio;
+    }
+    const drawX = cellX + cellPad + (availW-drawW)/2;
+    const drawY = cellY + cellPad + (availH-drawH)/2;
+
+    const format = img.mime.includes('png') ? 'PNG' : 'JPEG';
+    pdf.addImage(img.dataUrl, format, drawX, drawY, drawW, drawH);
+
+    pdf.setDrawColor(190);
+    pdf.rect(cellX, cellY, cellW, cellH);
+  });
+
+  pdf.save(`Akty_foto_${localDateStr(new Date())}.pdf`);
+  showToast('PDF сохранён');
 });
 
 // print
