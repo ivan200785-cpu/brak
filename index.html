@@ -380,12 +380,12 @@
     font-weight:600;
     margin:1px 0 8px;
   }
-  .pt-field{font-size:8.5px;margin:0 0 3.5px 1px;}
+  .pt-field{font-size:15px;margin:0 0 3.5px 1px;}
   .pt-field .fill{
     display:inline-block;min-width:64px;border-bottom:1px solid #000;
     padding:0 3px 0;font-weight:600;
   }
-  .pt-inline-fields{font-size:8.5px;margin:6px 0 5px 1px;}
+  .pt-inline-fields{font-size:10px;margin:6px 0 5px 1px;}
   .pt-inline-fields .fill{
     display:inline-block;min-width:28px;border-bottom:1px solid #000;
     padding:0 3px 0;font-weight:600;margin-right:10px;
@@ -397,7 +397,7 @@
   .pt-table th, .pt-table td{
     border:1px solid #000;
     padding:2px 3px;
-    font-size:6.8px;
+    font-size:8.6px;
     vertical-align:top;
   }
   .pt-table th{
@@ -410,9 +410,10 @@
   .pt-table td.pt-total{width:34px;text-align:right;}
   .pt-table td.pt-name{width:38%;}
   .pt-table td.pt-desc{width:60px;}
-  .pt-table tr{height:13px;}
+  .pt-table tr{height:16px;}
 
-  .pt-footer{margin-top:7px;font-size:8.5px;}
+  .pt-footer{margin-top:7px;font-size:10px;}
+  .pt-footer .pt-line-lg{font-size:15px;}
   .pt-footer .pt-line{margin:0 0 4.5px 1px;}
   .pt-footer .fill-long{
     display:inline-block;min-width:120px;border-bottom:1px solid #000;
@@ -986,8 +987,8 @@ function buildActHtml(rowsSlice, startIndex, minRows, totalStr){
     </table>
 
     <div class="pt-footer">
-      <div class="pt-line">Итого сумма <span class="fill-long">${esc(totalStr)}</span></div>
-      <div class="pt-line">Менеджер <span class="fill-long">${val('managerName')}</span></div>
+      <div class="pt-line pt-line-lg">Итого сумма <span class="fill-long">${esc(totalStr)}</span></div>
+      <div class="pt-line pt-line-lg">Менеджер <span class="fill-long">${val('managerName')}</span></div>
       <div class="pt-line">Начальник склада <span class="fill-long">${val('warehouseHead')}</span></div>
       <div class="pt-line">М.П.</div>
     </div>
